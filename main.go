@@ -2,54 +2,115 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tui "github.com/marcusolsson/tui-go"
 )
 
-var curReq = request{}
-var focWdg = make([]tui.Widget, 0)
-var ansWidget *tui.TextEdit
-var ui tui.UI
+var curReq = request{
+	Method: "GET",
+}
+
+var (
+	focWdg = map[string][]tui.Widget{
+		" History ": make([]tui.Widget, 0),
+		" Request ": make([]tui.Widget, 0),
+		" Answer ":  make([]tui.Widget, 0),
+	}
+	scr        *tui.ScrollArea
+	ansHeaders *tui.TextEdit
+	ansBody    *tui.TextEdit
+	ui         tui.UI
+)
+
+func init() {
+	home := os.Getenv("HOME")
+	ensurePath(home)
+	loadHistory()
+}
 
 func main() {
+	initTheme()
 	var methBox = getMethodBox()
-	var urlBox = getUrlBox()
+	var reqBox = getReqBox()
 	var ansBox = getAnswerBox()
-	var mainBox = tui.NewHBox(methBox, urlBox, ansBox)
+	var hstBox = getHistoryBox()
+
+	tabLayout := newTabWidget(
+		&uiTab{label: tui.NewLabel(" Request "), view: reqBox},
+		&uiTab{label: tui.NewLabel(" Answer "), view: ansBox},
+		&uiTab{label: tui.NewLabel(" History "), view: hstBox},
+	)
+
+	var mainBox = tui.NewVBox(methBox, tabLayout)
 
 	ui, _ = tui.New(mainBox)
 
-	fc.Set(focWdg...)
+	fc.Set(focWdg[" Request "]...)
+	ui.SetTheme(myTheme)
 	ui.SetFocusChain(cfc)
 	ui.SetKeybinding("Esc", func() { fmt.Println("quit"); ui.Quit() })
+	ui.SetKeybinding("P", func() {
+		if scr.IsFocused() {
+			scr.Scroll(0, -1)
+		}
+	})
+	ui.SetKeybinding("N", func() {
+		if scr.IsFocused() {
+			scr.Scroll(0, 1)
+		}
+	})
+
 	e := ui.Run()
 	if e != nil {
 		fmt.Println("e:", e.Error())
 	}
 
-	fmt.Println("selected method:", curReq.Method)
-	fmt.Println("url:", curReq.Url)
-	fmt.Println("ans:", curReq.Answer)
-
 }
 
 func getMethodBox() tui.Widget {
-	lbl := tui.NewLabel("Method")
-	lst := tui.NewList()
 
+	lst := tui.NewList()
 	lst.AddItems(methodList...)
 	lst.OnSelectionChanged(changeReqMethod)
 	lst.SetSelected(0)
-	changeReqMethod(lst)
-	focWdg = append(focWdg, lst)
+	lst.SetSizePolicy(tui.Minimum, tui.Minimum)
+	curReqWidgets.Method = lst
+	focWdg[" History "] = append(focWdg[" History "], lst)
+	focWdg[" Request "] = append(focWdg[" Request "], lst)
+	focWdg[" Answer "] = append(focWdg[" Answer "], lst)
 
-	lblHead := tui.NewLabel("Headers")
-	headers := tui.NewTextEdit()
-	headers.OnTextChanged(changeReqHeaders)
-	focWdg = append(focWdg, headers)
+	lstBox := tui.NewHBox(lst)
+	lstBox.SetTitle("Method")
+	lstBox.SetBorder(true)
+	lstBox.SetSizePolicy(tui.Maximum, tui.Maximum)
 
-	box := tui.NewVBox(lbl, lst, lblHead, headers)
+	entry := tui.NewEntry()
+	entry.OnChanged(changeReqUrl)
+	curReqWidgets.Url = entry
+	focWdg[" History "] = append(focWdg[" History "], entry)
+	focWdg[" Request "] = append(focWdg[" Request "], entry)
+	focWdg[" Answer "] = append(focWdg[" Answer "], entry)
+
+	entryBox := tui.NewHBox(entry)
+	entryBox.SetTitle("Url")
+	entryBox.SetBorder(true)
+	entryBox.SetSizePolicy(tui.Minimum, tui.Maximum)
+
+	btn := tui.NewButton("SEND")
+	btn.OnActivated(sendButtonFunc)
+	focWdg[" History "] = append(focWdg[" History "], btn)
+	focWdg[" Request "] = append(focWdg[" Request "], btn)
+	focWdg[" Answer "] = append(focWdg[" Answer "], btn)
+
+	btnBox := tui.NewHBox(btn)
+	btnBox.SetBorder(true)
+	btnBox.SetSizePolicy(tui.Maximum, tui.Maximum)
+
+	box := tui.NewHBox(lstBox, entryBox, btnBox)
+	box.SetBorder(true)
+	box.SetSizePolicy(tui.Minimum, tui.Maximum)
 	return box
 }
 
@@ -69,22 +130,29 @@ func changeReqHeaders(headers *tui.TextEdit) {
 	}
 }
 
-func getUrlBox() tui.Widget {
-	lbl := tui.NewLabel("Url")
-	entry := tui.NewEntry()
-	entry.OnChanged(changeReqUrl)
-	focWdg = append(focWdg, entry)
+func getReqBox() tui.Widget {
 
-	lbl2 := tui.NewLabel("Body")
+	headers := tui.NewTextEdit()
+	headers.OnTextChanged(changeReqHeaders)
+	curReqWidgets.Headers = headers
+	focWdg[" Request "] = append(focWdg[" Request "], headers)
+
+	headersBox := tui.NewVBox(headers)
+	headersBox.SetSizePolicy(tui.Minimum, tui.Maximum)
+	headersBox.SetTitle("Headers")
+	headersBox.SetBorder(true)
+
 	tedit := tui.NewTextEdit()
 	tedit.OnTextChanged(changeReqBody)
-	focWdg = append(focWdg, tedit)
+	curReqWidgets.Body = tedit
+	focWdg[" Request "] = append(focWdg[" Request "], tedit)
 
-	btn := tui.NewButton("SEND")
-	btn.OnActivated(sendButtonFunc)
-	focWdg = append(focWdg, btn)
+	var bodyBox = tui.NewVBox(tedit)
+	bodyBox.SetSizePolicy(tui.Maximum, tui.Minimum)
+	bodyBox.SetTitle("Body")
+	bodyBox.SetBorder(true)
 
-	var box = tui.NewVBox(lbl, entry, lbl2, tedit, btn)
+	var box = tui.NewVBox(headersBox, bodyBox)
 	return box
 }
 
@@ -97,10 +165,23 @@ func changeReqBody(entry *tui.TextEdit) {
 }
 
 func getAnswerBox() tui.Widget {
-	lbl2 := tui.NewLabel("Answer")
-	tedit := tui.NewTextEdit()
-	tedit.SetText(curReq.Answer)
-	ansWidget = tedit
-	var box = tui.NewVBox(lbl2, tedit)
+
+	ansHeaders = tui.NewTextEdit()
+
+	headersBox := tui.NewVBox(ansHeaders)
+	headersBox.SetSizePolicy(tui.Minimum, tui.Maximum)
+	headersBox.SetTitle("Headers")
+	headersBox.SetBorder(true)
+
+	ansBody = tui.NewTextEdit()
+	scr = tui.NewScrollArea(ansBody)
+	focWdg[" Answer "] = append(focWdg[" Answer "], scr)
+
+	var bodyBox = tui.NewVBox(scr)
+	bodyBox.SetSizePolicy(tui.Maximum, tui.Minimum)
+	bodyBox.SetTitle("Body")
+	bodyBox.SetBorder(true)
+
+	var box = tui.NewVBox(headersBox, bodyBox)
 	return box
 }
